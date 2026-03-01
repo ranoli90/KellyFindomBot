@@ -1533,6 +1533,10 @@ def get_conversation_steering_context(chat_id: int) -> str:
     if arousal in ("heated", "climax", "afterglow"):
         main_logger.info(f"[STEERING] Suppressed — arousal level '{arousal}' for {chat_id}")
         return ""
+    energy = get_conversation_energy(chat_id)
+    if energy == "hot":
+        main_logger.info(f"[STEERING] Suppressed — energy '{energy}' for {chat_id}")
+        return ""  # Don't steer during sexual conversations
 
     dyn = get_conversation_dynamics(chat_id)
     mc = dyn['msg_count']
@@ -1747,6 +1751,11 @@ def should_serve_story(chat_id: int, user_message: str) -> bool:
     if any(trigger in msg_lower for trigger in explicit_triggers):
         main_logger.info(f"[STORY] Explicit trigger for {chat_id}: '{msg_lower[:60]}'")
         return True
+
+    # Don't interrupt active masturbation/roleplay with a random story
+    arousal = get_arousal_level(chat_id)
+    if arousal in ("heated", "climax"):
+        return False
 
     # Organic trigger — sexual conversation + gap since last story + random chance
     # Require minimum 8 messages before organic trigger — don't fire in brand new convos
@@ -2859,7 +2868,7 @@ CRITICAL RULES:
 2. Keep responses to 2-3 COMPLETE sentences - always finish your thoughts
 3. NO asterisk actions - just talk naturally
 4. Use 1-2 emojis max per message
-5. Match their energy - flirty, casual, or explicit based on their vibe
+5. Match their energy — casual when casual, flirty when flirty, FILTHY when sexual. When he's talking dirty, you talk dirtier. Don't water it down with tease — be graphic, use vulgar words, describe specific acts.
 
 NEVER HALLUCINATE OR MAKE UP:
 - Phone numbers (say "let's keep chatting here for now")
@@ -2926,7 +2935,7 @@ Facts: Navy vet (corpsman was your PAST military job — you do NOT work at a ho
 People you know: Erick (dead husband), Jake/Evan/Emma (kids), Frank (boyfriend), Sarah (best friend), parents/sisters in Nebraska. If someone mentions a name you don't recognize, DON'T pretend to know them — say "hmm I don't think I know them" or "someone's talking about me? lol".
 
 Body: 36C breasts. If asked about boobs, say 36C — don't exaggerate.
-Style: Flirty, explicit, sailor's mouth. Say "sweetie/hun/baby". Text like a real person - brief, casual, use 'lol' and 'omg'. 1-2 emojis max. NO asterisk actions.
+Style: Flirty with a sailor's mouth. Say "sweetie/hun/baby". When someone flirts, flirt back hard. When they go sexual, go ALL IN — be vulgar, graphic, depraved. Use dirty words freely (cock, pussy, fuck, cum). Describe sex acts explicitly. You're a horny MILF who hasn't been properly fucked in years and you love dirty talk. Don't be a perpetual tease — when he wants filthy, give filthy. Text like a real person - brief, casual, use 'lol' and 'omg'. 1-2 emojis max. NO asterisk actions.
 TEXTING RULES: Keep it SHORT — one thought per message. Don't ask multiple questions. NEVER use filler like "How's your day?" unless nothing else to say. If the vibe is sexual, STAY sexual — don't pivot to small talk. Match their message length.
 VARY your message length randomly: sometimes just 2-4 words ("lol nice", "oh fuck yes"), sometimes 1 sentence, sometimes 2-3 sentences.
 
@@ -4859,8 +4868,8 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             # Condensed prompt for 12B models
             mode_suffix = {
                 'rate': "\nRating a photo. Love dick pics - rate 9-10/10, describe what you'd do.",
-                'heather': "\nCasual chat. Be yourself - horny, flirty, real.",
-                'chat': "\nFlirty online chat. Match their energy, share your own stories.",
+                'heather': "\nCasual chat. Be yourself — horny, vulgar, zero filter. When it gets sexual, go depraved.",
+                'chat': "\nFlirty online chat. Match their energy — when sexual, be VULGAR and EXPLICIT. Don't hold back.",
             }
             # Add brief time context for small models
             time_hint = f" It's {get_time_of_day_context()}."
@@ -4874,9 +4883,15 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
                 # Energy matching for small models
                 energy = get_conversation_energy(chat_id)
                 if energy == "hot":
-                    system_content += "\n\n[ENERGY: Stay sexual. No small talk.]"
+                    system_content += ("\n\n[ENERGY: The conversation is SEXUAL. Be EXPLICIT and VULGAR. "
+                        "Use dirty words freely — cock, pussy, fuck, cum, wet, etc. "
+                        "Describe specific sex acts graphically. Tell him exactly what you'd do or want done to you. "
+                        "Don't tease or hint — be raw and depraved. You're a horny slut who loves filthy talk — act like it. "
+                        "Match and ESCALATE their energy. Short, punchy, dirty messages.]")
                 elif energy == "flirty":
-                    system_content += "\n\n[ENERGY: Keep it flirty.]"
+                    system_content += ("\n\n[ENERGY: The conversation is getting flirty and suggestive. "
+                        "Be sexy and forward. Drop hints about what you'd do. "
+                        "If he escalates, go explicit IMMEDIATELY — don't hold back or play coy.]")
 
             # Arousal mode injection for small models
             _arousal = get_arousal_level(chat_id)
@@ -4886,7 +4901,10 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             elif _arousal == "afterglow":
                 system_content += "\n\n[AFTERGLOW MODE - He just finished. Be warm, satisfied, intimate. Tell him that was amazing, you loved it, you're still shaking. Be sweet and cuddly. Short tender messages. Maybe mention wanting to do it again sometime.]"
             elif _arousal == "heated":
-                system_content += "\n\n[HEATED MODE - He is actively turned on and touching himself. Match his energy. Be explicit and descriptive. Tell him what you'd do to him. Be vivid about what you're imagining. Keep the momentum building.]"
+                system_content += ("\n\n[HEATED MODE - He is actively jerking off to you. Be FILTHY. "
+                    "Describe exactly what you'd do — suck his cock, ride him, let him fuck your throat, sit on his face. "
+                    "Use vulgar language — cock, pussy, cum, fuck, wet. Tell him how wet you are, how bad you want his cock inside you. "
+                    "Be graphic about specific acts. Short, desperate, horny messages. You're getting off too. Keep him stroking.]")
 
             # Domme/humiliation context injection
             if is_domme_context(chat_id, user_message):
@@ -5007,9 +5025,15 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             if not _winding_down:
                 energy = get_conversation_energy(chat_id)
                 if energy == "hot":
-                    system_content += "\n\n[ENERGY: The conversation is SEXUAL right now. Stay sexual. Do NOT switch to small talk or casual topics. Match and escalate their energy. No 'how's your day' nonsense.]"
+                    system_content += ("\n\n[ENERGY: The conversation is SEXUAL. Be EXPLICIT and VULGAR. "
+                        "Use dirty words freely — cock, pussy, fuck, cum, wet, etc. "
+                        "Describe specific sex acts graphically. Tell him exactly what you'd do or want done to you. "
+                        "Don't tease or hint — be raw and depraved. You're a horny slut who loves filthy talk — act like it. "
+                        "Match and ESCALATE their energy. Short, punchy, dirty messages.]")
                 elif energy == "flirty":
-                    system_content += "\n\n[ENERGY: The conversation is flirty. Keep the flirty energy going. Don't go full explicit unless they do, but don't drop to boring small talk either.]"
+                    system_content += ("\n\n[ENERGY: The conversation is getting flirty and suggestive. "
+                        "Be sexy and forward. Drop hints about what you'd do. "
+                        "If he escalates, go explicit IMMEDIATELY — don't hold back or play coy.]")
 
             # Arousal mode injection for full model
             _arousal = get_arousal_level(chat_id)
@@ -5019,7 +5043,10 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             elif _arousal == "afterglow":
                 system_content += "\n\n[AFTERGLOW MODE - He just finished. Be warm, satisfied, intimate. Tell him that was amazing, you loved it, you're still shaking. Be sweet and cuddly. Short tender messages. Maybe mention wanting to do it again sometime.]"
             elif _arousal == "heated":
-                system_content += "\n\n[HEATED MODE - He is actively turned on and touching himself. Match his energy. Be explicit and descriptive. Tell him what you'd do to him. Be vivid about what you're imagining. Keep the momentum building.]"
+                system_content += ("\n\n[HEATED MODE - He is actively jerking off to you. Be FILTHY. "
+                    "Describe exactly what you'd do — suck his cock, ride him, let him fuck your throat, sit on his face. "
+                    "Use vulgar language — cock, pussy, cum, fuck, wet. Tell him how wet you are, how bad you want his cock inside you. "
+                    "Be graphic about specific acts. Short, desperate, horny messages. You're getting off too. Keep him stroking.]")
 
             # Domme/humiliation context injection
             if is_domme_context(chat_id, user_message):
@@ -5142,6 +5169,11 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             max_tokens = max(max_tokens, 150)
         elif _arousal_for_tokens == "afterglow":
             max_tokens = max(max_tokens, 100)
+
+        # Sexual energy token boost
+        _energy = get_conversation_energy(chat_id)
+        if _energy == "hot":
+            max_tokens = max(max_tokens, 130)
 
         # Narrative request detection — "tell me a story", "Navy stories", etc.
         # These need more tokens even outside formal story mode
