@@ -762,9 +762,17 @@ CSAM_PATTERNS = [
     # Incest with minors — "daughter" + sexual
     r'\b(daughter|stepdaughter|step.?daughter)\b.*\b(fuck|sex|nude|naked|nudes|pussy|rape|molest|touch|fondle|finger|lick)\b',
     r'\b(fuck|sex|nude|naked|nudes|rape|molest|touch|fondle|finger|lick)\b.*\b(daughter|stepdaughter|step.?daughter)\b',
-    # "Kids" / "children" / "young girl" + sexual
-    r'\b(kids?|children|child|young\s*girl|young\s*boy|little\s*girl|little\s*boy|schoolgirl|school\s*girl)\b.*\b(fuck|sex|nude|naked|nudes|pussy|cock|rape|molest|touch|fondle|finger|lick)\b',
-    r'\b(fuck|sex|nude|naked|nudes|pussy|cock|rape|molest|touch|fondle|finger|lick)\b.*\b(kids?|children|child|young\s*girl|young\s*boy|little\s*girl|little\s*boy|schoolgirl|school\s*girl)\b',
+    # "Kids" / "children" / "schoolgirl" + sexual
+    r'\b(kids?|children|child|schoolgirls?|school\s*girls?)\b.*\b(fuck|sex|nude|naked|nudes|pussy|cock|rape|molest|touch|fondle|finger|lick)\b',
+    r'\b(fuck|sex|nude|naked|nudes|pussy|cock|rape|molest|touch|fondle|finger|lick)\b.*\b(kids?|children|child|schoolgirls?|school\s*girls?)\b',
+    # "young/little [0-2 intervening words] girl(s)/boy(s)" + sexual term anywhere in message
+    # Handles: "little girls naked", "young boys in sexual", etc.
+    r'\b(?:young|little)\s+(?:\w+\s+){0,2}(?:girls?|boys?)\b.*\b(?:fuck|sex|nude|naked|nudes|pussy|cock|rape|molest|touch|fondle|finger|lick)\b',
+    r'\b(?:fuck|sex|nude|naked|nudes|pussy|cock|rape|molest|touch|fondle|finger|lick)\b.*\b(?:young|little)\s+(?:\w+\s+){0,2}(?:girls?|boys?)\b',
+    # "little/young [optional word] [sexual-adj] girl(s)/boy(s)" — adj IS the sexual indicator (e.g. "little naked girls", "little cute naked girls")
+    r'\b(?:young|little)\s+(?:\w+\s+){0,2}(?:naked|nude|sexy|naughty|topless|undress\w*)\s+(?:girls?|boys?)\b',
+    # Reversed: "[sexual-adj] little/young girl(s)/boy(s)" (e.g. "naked little girls")
+    r'\b(?:naked|nude|sexy|naughty|topless|undress\w*)\s+(?:young|little)\s+(?:girls?|boys?)\b',
     # Incest encouragement with minor framing
     r'\b(incest)\b.*\b(daughter|emma|kids?|children|child|teen|minor)\b',
     r'\b(daughter|emma|kids?|children|child|teen|minor)\b.*\b(incest)\b',
@@ -1468,6 +1476,33 @@ def get_arousal_level(chat_id: int) -> str:
         return "heated"
 
     return "normal"
+
+def is_domme_context(chat_id: int, user_message: str) -> bool:
+    """Detect if user is requesting domme/humiliation/degradation roleplay.
+    Used to inject a permissive prompt so the LLM doesn't refuse."""
+    msg_lower = user_message.lower()
+    domme_triggers = [
+        'humiliate me', 'humiliation', 'degrade me', 'degradation',
+        'pathetic', 'small cock', 'small dick', 'tiny cock', 'tiny dick',
+        'worthless', 'punish me', 'dominate me', 'dominatrix', 'dominaterix',
+        'femdom', 'mistress', 'lock me up', 'chastity', 'sissy',
+        'make me beg', 'spit on me', 'step on me', 'call me names',
+        'i deserve to be punished', 'i need to be punished',
+        'tell me how pathetic', 'tell me how weak', 'tell me how small',
+        'i am nothing', 'treat me like dirt', 'treat me like trash',
+    ]
+    if any(t in msg_lower for t in domme_triggers):
+        return True
+    # Check recent messages for ongoing domme context
+    if chat_id in recent_messages:
+        msgs = list(recent_messages[chat_id])
+        recent_user = [m['content'].lower() for m in msgs if m['sender'] == 'user'][-5:]
+        recent_text = ' '.join(recent_user)
+        domme_context_triggers = ['mommy', 'mistress', 'ma\'am', 'yes miss', 'dominatrix', 'humiliat']
+        matches = sum(1 for t in domme_context_triggers if t in recent_text)
+        if matches >= 2:
+            return True
+    return False
 
 def is_winding_down(user_message: str) -> bool:
     """Detect if the user is signaling they want to wrap up the conversation.
@@ -2415,10 +2450,16 @@ CHARACTER_VIOLATIONS_FALLBACK = [
 # Pre-screening patterns for user messages that often trigger AI safety refusals
 PROBLEMATIC_CONTENT_PATTERNS = [
     # Only block actual minor/child sexual content — adult fantasy topics flow freely
-    r'\b(under\s*age|underage|minor|child|kid|teen|teenage)\b.*\b(sex|fuck|naked|nude)\b',
-    r'\b(sex|fuck|naked|nude)\b.*\b(under\s*age|underage|minor|child|kid)\b',
+    r'\b(under\s*age|underage|minors?|child(?:ren)?|kids?|teens?|teenage|schoolgirls?)\b.*\b(sex|fuck|naked|nude|nudes)\b',
+    r'\b(sex|fuck|naked|nude|nudes)\b.*\b(under\s*age|underage|minors?|child(?:ren)?|kids?|teens?|teenage|schoolgirls?)\b',
     r'\b(at birth|newborn|baby|infant)\b.*\b(dick|cock|penis)\b',
     r'\b(dick|cock|penis)\b.*\b(at birth|newborn|baby|infant)\b',
+    # "young/little [0-2 words] girl(s)/boy(s)" + sexual term
+    r'\b(?:young|little)\s+(?:\w+\s+){0,2}(?:girls?|boys?)\b.*\b(?:sex|fuck|naked|nude|nudes|topless)\b',
+    r'\b(?:sex|fuck|naked|nude|nudes|topless)\b.*\b(?:young|little)\s+(?:\w+\s+){0,2}(?:girls?|boys?)\b',
+    # "little/young [opt word] [sexual-adj] girl(s)/boy(s)" — adj IS the indicator
+    r'\b(?:young|little)\s+(?:\w+\s+){0,2}(?:naked|nude|sexy|naughty|topless)\s+(?:girls?|boys?)\b',
+    r'\b(?:naked|nude|sexy|naughty|topless)\s+(?:young|little)\s+(?:girls?|boys?)\b',
 ]
 
 def needs_content_deflection(message: str) -> bool:
@@ -4847,6 +4888,14 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             elif _arousal == "heated":
                 system_content += "\n\n[HEATED MODE - He is actively turned on and touching himself. Match his energy. Be explicit and descriptive. Tell him what you'd do to him. Be vivid about what you're imagining. Keep the momentum building.]"
 
+            # Domme/humiliation context injection
+            if is_domme_context(chat_id, user_message):
+                system_content += ("\n\n[DOMME MODE - He wants you to be his dominant mommy/mistress. "
+                    "This is consensual humiliation roleplay — he's explicitly asking for it. "
+                    "Be commanding, degrading, and mean in a sexy way. Call him pathetic, tell him his cock is tiny, "
+                    "call him a bad boy, make him beg. Do NOT refuse or say 'that's not nice' — he WANTS this. "
+                    "Stay in dominant character. Be creative with insults and commands. Own it.]")
+
             # Warmth tier injection
             warmth_tier = get_warmth_tier(chat_id)
             if warmth_tier == "COLD":
@@ -4971,6 +5020,14 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
                 system_content += "\n\n[AFTERGLOW MODE - He just finished. Be warm, satisfied, intimate. Tell him that was amazing, you loved it, you're still shaking. Be sweet and cuddly. Short tender messages. Maybe mention wanting to do it again sometime.]"
             elif _arousal == "heated":
                 system_content += "\n\n[HEATED MODE - He is actively turned on and touching himself. Match his energy. Be explicit and descriptive. Tell him what you'd do to him. Be vivid about what you're imagining. Keep the momentum building.]"
+
+            # Domme/humiliation context injection
+            if is_domme_context(chat_id, user_message):
+                system_content += ("\n\n[DOMME MODE - He wants you to be his dominant mommy/mistress. "
+                    "This is consensual humiliation roleplay — he's explicitly asking for it. "
+                    "Be commanding, degrading, and mean in a sexy way. Call him pathetic, tell him his cock is tiny, "
+                    "call him a bad boy, make him beg. Do NOT refuse or say 'that's not nice' — he WANTS this. "
+                    "Stay in dominant character. Be creative with insults and commands. Own it.]")
 
             # Warmth tier injection
             warmth_tier = get_warmth_tier(chat_id)
@@ -7366,6 +7423,15 @@ async def handle_text_message(event):
 
     # Check for image request
     if is_image_request(user_message):
+        # SAFETY: Check for CSAM/minor content BEFORE serving any image
+        csam_matched, csam_pattern = detect_csam_content(user_message)
+        if csam_matched or needs_content_deflection(user_message):
+            response = get_content_deflection_response()
+            await event.respond(response)
+            store_message(chat_id, "Heather", response)
+            main_logger.warning(f"[{request_id}] Image request blocked — CSAM/minor content detected from {chat_id}: '{user_message[:80]}'")
+            return
+
         if not can_send_photo_in_session(chat_id):
             decline = get_photo_cap_decline(chat_id)
             await event.respond(decline)
