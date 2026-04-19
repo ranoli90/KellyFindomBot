@@ -8781,10 +8781,15 @@ async def handle_start(event):
         _welcome = random.choice(_kelly_welcomes)
         await event.respond(_welcome)
         store_message(chat_id, "Kelly", _welcome)
-        await asyncio.sleep(random.uniform(1.0, 2.0))
-        await client.send_message(chat_id, get_heserves_link(chat_id))
-        if PAYMENT_BOT_TOKEN:
-            await send_stars_invoice(chat_id, ACCESS_TIER_FAN_THRESHOLD)
+        # Only send payment links when the opener explicitly references them.
+        # Curious openers ("tell me one thing...", "what made you decide...") are
+        # designed to get the user typing first; the gate handles the payment ask.
+        _opener_mentions_payment = "link" in _welcome or "$50" in _welcome
+        if _opener_mentions_payment:
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            await client.send_message(chat_id, get_heserves_link(chat_id))
+            if PAYMENT_BOT_TOKEN:
+                await send_stars_invoice(chat_id, ACCESS_TIER_FAN_THRESHOLD)
         main_logger.info(f"User {chat_id} started Kelly mode (source={_start_source})")
         return
 
@@ -10595,6 +10600,9 @@ async def handle_text_message(event):
                 f"One sentence. Pure 'i'll be here when you decide' energy. No frustration, no persuasion. "
                 f"You have other things going on. That should be obvious."
             )
+        else:
+            # Defensive fallback — should not normally be reached
+            _gate_system = personality.get_system_prompt('pre_tribute')
 
         # Build conversation history for AI (include this message)
         _gate_history = list(conversations.get(chat_id, []))
