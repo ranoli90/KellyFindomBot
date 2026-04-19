@@ -34,7 +34,7 @@ On your local machine:
 
 ```bash
 aws configure
-# AWS Access Key ID:     AKIATBWTLQQG4RVTC2UN  (rotate after setup!)
+# AWS Access Key ID:     AKIAIOSFODNN7EXAMPLE  (replace with your real key — rotate after setup!)
 # AWS Secret Access Key: (your secret key)
 # Default region:        us-east-1
 # Default output format: json
@@ -213,7 +213,7 @@ aws logs tail /ecs/kelly-prod/bot --since 1h
 
 ## ⚠️ Post-Setup Security Checklist
 
-- [ ] Rotate AWS access key (AKIATBWTLQQG4RVTC2UN) — create new IAM user with least privilege
+- [ ] Rotate AWS access key (AKIAIOSFODNN7EXAMPLE) — create new IAM user with least privilege
 - [ ] Rotate ElevenLabs API key — generate new one at elevenlabs.io/settings
 - [ ] Restrict `allowed_cidr_blocks` in `variables.tf` to your IP (currently 0.0.0.0/0)
 - [ ] Enable MFA on your AWS root account

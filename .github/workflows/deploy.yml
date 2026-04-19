@@ -66,7 +66,7 @@ for f in ['kelly_persona.yaml', 'persona_example.yaml', 'heather_kink_personas.y
       - name: Check for hardcoded secrets
         run: |
           # Fail if any real API key patterns appear in committed code
-          if grep -rE 'AKIAT[A-Z0-9]{16}|sk_[a-z0-9]{40}|api_hash\s*=\s*"[a-f0-9]{32}"' \
+          if grep -rE 'AKIAT[A-Z0-9]{16}|sk_[a-z0-9]{40}|api_hash\s*=\s*"[a-fA-F0-9]{32}"' \
             --include="*.py" --include="*.yaml" --include="*.json" --include="*.sh" \
             --exclude-dir=".git" .; then
             echo "ERROR: Hardcoded secret detected in source code!"
