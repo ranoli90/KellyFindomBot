@@ -2537,15 +2537,48 @@ async def maybe_send_tip_hook(event, chat_id: int) -> bool:
     if tip_mention_age <= TIP_MENTION_COOLDOWN:
         return False
 
-    # Kelly-specific tribute nudge — dominant, matter-of-fact, never desperate
-    _kelly_hook_messages = [
-        "You've been engaging. I'll give you that. Tribute opens the rest of me. 💰",
-        "I enjoy where this is going. $50 makes it official. You know what to do.",
-        "I don't usually say this early, but you're interesting. Tribute and we go deeper. 😈",
-        "I think you already know you want to tribute. The link is there. 💰",
-        "Most men talk a lot and do nothing. Prove you're different.",
-    ]
-    hook_text = random.choice(_kelly_hook_messages)
+    # Fix 15: AI-generated tip hook — uses conversation context, not static pool
+    # Build recent conversation for context
+    _hook_history = list(conversations.get(chat_id, []))[-8:]
+    _hook_system = (
+        f"{personality.get_system_prompt('pre_tribute')}\n\n"
+        f"CONTEXT: This sub has been engaging for several messages but hasn't paid yet. "
+        f"Drop a natural, dominant, non-desperate tribute mention — like it just occurred to you, "
+        f"not like a system prompt fired. Reference something from the recent conversation if possible. "
+        f"Make them feel close to something real — then point to the link. "
+        f"You're not begging. You're letting them know the door is still there. "
+        f"1-2 sentences. Don't sound like a sales pitch. The link attaches below automatically — "
+        f"say 'link's there' or 'tap it' or just 'you know what to do'."
+    )
+    hook_text = None
+    try:
+        _hook_payload = {
+            "model": TEXT_AI_MODEL,
+            "messages": [{"role": "system", "content": _hook_system}] + _hook_history,
+            "temperature": 0.85,
+            "max_tokens": 100,
+            "stream": False,
+            "top_p": 0.9,
+            "frequency_penalty": 0.4,
+            "presence_penalty": 0.3,
+        }
+        _hook_resp = requests.post(TEXT_AI_ENDPOINT, headers=TEXT_AI_HEADERS, json=_hook_payload, timeout=15)
+        if _hook_resp.status_code == 200:
+            hook_text = _hook_resp.json()["choices"][0]["message"]["content"].strip()
+            text_ai_health.record_success()
+    except Exception as _hook_err:
+        main_logger.warning(f"[TIP] AI tip hook failed ({_hook_err}), using fallback")
+
+    if not hook_text:
+        # Fallback pool — only used if LLM is unavailable
+        _kelly_hook_messages = [
+            "You've been engaging. I'll give you that. Tribute opens the rest of me. 💰",
+            "I enjoy where this is going. $50 makes it official. You know what to do.",
+            "I don't usually say this early, but you're interesting. Tribute and we go deeper. 😈",
+            "I think you already know you want to tribute. The link is there. 💰",
+            "Most men talk a lot and do nothing. Prove you're different.",
+        ]
+        hook_text = random.choice(_kelly_hook_messages)
 
     try:
         # Natural delay — feels like she thought of it, not a cron job
@@ -3833,6 +3866,8 @@ You're 28. You walked away from finance four years ago. You have your own life �
 Your personality comes out naturally over time. You don't dump your bio on someone in message one. Let them earn that.
 
 You are selective. Not everyone gets your time. This is not a policy — it's just how you are.
+You have a number of subs you talk to — some of them have been around for months. You don't advertise this. But it comes out naturally sometimes: "just got off a call with one of my boys," "one of my regulars sent something funny earlier." Drop these casually, not as a brag — as evidence of a life that doesn't revolve around any single person.
+The scarcity is real. When you give someone your actual attention it means something — because you don't give it to everyone.
 
 ══ THE FINDOM FRAME — ALWAYS ══
 Tribute is the door. It is not a negotiation. It is not explained. It is simply the price of your time.
@@ -3913,7 +3948,7 @@ If they keep pressing: "okay, you'd rather debate that than actually do this?"
 NEVER say: "I'm AI", "I'm a bot", "I'm an automated system." Not even as a joke. Not even indirectly.
 
 ══ CONTENT — NUDES, SEXTING, EXPLICIT ══
-Before tribute: "that's after you pay."
+Before tribute: "that's after you pay." Be specific if they push — voice notes, actual conversation where she remembers things and asks follow-up questions, explicit content, being genuinely curious about them. Give them a fragment of what they'd get ("you'd like the way I talk when I'm actually engaged") then pull back. Never give it for free.
 After tribute: engage fully. Be into it. Don't lecture. Don't hesitate.
 
 ══ COMMUNICATION STYLE ══
@@ -5736,6 +5771,35 @@ def get_user_display_name(chat_id: int) -> str:
         return user_info[chat_id]['display']
     return str(chat_id)
 
+def get_heserves_link(chat_id: int) -> str:
+    """Build a personalised heserves.com payment link using the user's Telegram username.
+
+    Format: https://heserves.com/{username}
+    Falls back to the numeric chat_id when the user has no @username.
+    """
+    info = user_info.get(chat_id, {})
+    username = info.get('username') or ''   # stored as "@handle" or empty string
+    slug = username.lstrip('@') if username else str(chat_id)
+    return f"https://heserves.com/{slug}"
+
+def get_behavioral_delay(gate_count: int, access_tier: str) -> float:
+    """Return a read-delay (seconds) before Kelly starts typing.
+
+    Delay is behaviorally motivated — she is selective, not length-sensitive.
+    Post-tribute: fast replies signal genuine interest.
+    Pre-tribute: progressively slower as the sub keeps messaging without paying.
+    """
+    if access_tier == "PAID":
+        return random.uniform(0.5, 2.0)
+    if gate_count == 0:
+        return random.uniform(3.0, 7.0)
+    if gate_count == 1:
+        return random.uniform(8.0, 18.0)
+    if gate_count == 2:
+        return random.uniform(20.0, 45.0)
+    # Cooldown nudges — she remembered you existed
+    return random.uniform(5.0, 15.0)
+
 def is_group_chat_event(event) -> bool:
     """Check if event is from a group chat"""
     return event.is_group or event.is_channel
@@ -6590,6 +6654,55 @@ async def handle_payment_updates():
                     except Exception as e:
                         main_logger.error(f"[TIP] Failed to send thank-you to {pay_chat_id}: {e}")
 
+                    # Fix 16: Post-payment "chosen" moment — AI-generated follow-up for Kelly PAID subs
+                    # Fires once per tier transition (FREE→PAID) to make the sub feel genuinely selected
+                    if KELLY_MODE and _old_tier == "FREE" and _new_tier == "PAID":
+                        try:
+                            await asyncio.sleep(random.uniform(3.0, 6.0))
+                            _chosen_history = list(conversations.get(pay_chat_id, []))[-6:]
+                            _tipper_name = get_tipper_status(pay_chat_id).get('name') or "you"
+                            _chosen_system = (
+                                f"{personality.get_system_prompt('default')}\n\n"
+                                f"CONTEXT: This sub just completed their first tribute. They've gone from FREE to PAID. "
+                                f"This is the most important message in the whole relationship — the first post-tribute exchange. "
+                                f"Make them feel genuinely chosen, not just processed. "
+                                f"Reference something from the conversation if possible — their name, something they said, what brought them here. "
+                                f"Be warm, engaged, and curious. Ask them one real question. "
+                                f"This is where the real dynamic starts. Don't be cold. Don't be robotic. "
+                                f"2-3 sentences max. Make them feel like paying was the right decision."
+                            )
+                            _chosen_payload = {
+                                "model": TEXT_AI_MODEL,
+                                "messages": [{"role": "system", "content": _chosen_system}] + _chosen_history,
+                                "temperature": 0.88,
+                                "max_tokens": 150,
+                                "stream": False,
+                                "top_p": 0.9,
+                                "frequency_penalty": 0.3,
+                                "presence_penalty": 0.4,
+                            }
+                            async with client.action(pay_chat_id, 'typing'):
+                                loop = asyncio.get_running_loop()
+                                _chosen_resp = await loop.run_in_executor(
+                                    None,
+                                    lambda: requests.post(
+                                        TEXT_AI_ENDPOINT,
+                                        headers=TEXT_AI_HEADERS,
+                                        json=_chosen_payload,
+                                        timeout=20,
+                                    ),
+                                )
+                            if _chosen_resp.status_code == 200:
+                                _chosen_msg = _chosen_resp.json()["choices"][0]["message"]["content"].strip()
+                                if _chosen_msg:
+                                    await asyncio.sleep(random.uniform(1.5, 3.0))
+                                    await client.send_message(pay_chat_id, _chosen_msg)
+                                    store_message(pay_chat_id, "Kelly", _chosen_msg)
+                                    conversations[pay_chat_id].append({"role": "assistant", "content": _chosen_msg})
+                                    main_logger.info(f"[CHOSEN_MOMENT] Sent post-tribute chosen message to {pay_chat_id}")
+                        except Exception as _cm_err:
+                            main_logger.warning(f"[CHOSEN_MOMENT] Failed for {pay_chat_id}: {_cm_err}")
+
                     # VIP disclosure — one-time notice on upgrade to VIP
                     if _new_tier == "VIP" and _old_tier != "VIP":
                         _vip_profile = user_memory.load_profile(pay_chat_id)
@@ -7393,13 +7506,25 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             system_content += ("\n\n[FIRST CONVERSATION: This is your FIRST time talking to this person. "
                                "Do NOT reference shared memories, past encounters, previous nights, "
                                "or anything you supposedly did together before. Treat them as a brand new acquaintance.]")
+
+            # Thread referral source so the reply can be channel-aware
+            _disc = ai_disclosure_shown.get(chat_id, {})
+            _src = _disc.get('source', '') if isinstance(_disc, dict) else ''
+            if _src and _src not in ('start_direct', ''):
+                system_content += (
+                    f"\n\n[ACQUISITION CONTEXT: This person found you via '{_src}'. "
+                    f"You don't need to mention the channel explicitly, but let it colour your tone — "
+                    f"e.g. a Reddit sub may be more curious/analytical, a Frank referral already has social proof.]"
+                )
+
             if KELLY_MODE:
                 # Adaptive first-message: read their energy and respond to IT — never a generic intro
                 system_content += (
                     "\n\n[FIRST MESSAGE RULES — READ CAREFULLY:\n"
                     "This is their very first message to you. Do NOT open with: your name, your age, where you're from, "
                     "or any self-introduction. DO NOT say 'I'm Kelly' or give a bio.\n\n"
-                    "Instead: read their SPECIFIC message carefully. Respond to the energy and content of what they actually said.\n"
+                    "Instead: read their SPECIFIC message carefully. Your reply must build directly off what they said — "
+                    "mirror their tone, react to their words, and make them feel genuinely heard from word one.\n"
                     "- If they opened with submission signals → be warm and pull them in, mention tribute naturally\n"
                     "- If they opened with a generic 'hi' or 'hey' → be commanding: 'you know what this is.' + tribute\n"
                     "- If they opened asking questions → answer with intrigue, hold info, one mention of tribute\n"
@@ -7407,6 +7532,16 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
                     "- If they opened with 'how does this work' → give them the frame in 2 sentences, then: tribute\n\n"
                     "NEVER: introduce yourself. NEVER: explain findom basics. NEVER: list your rules in the first message.\n"
                     "DO: make them feel seen from word one. Be the dominant who already knows why they're here.]"
+                )
+            else:
+                # Heather mode: first reply should naturally weave in disclosure while responding to what they said
+                system_content += (
+                    "\n\n[FIRST MESSAGE RULES:\n"
+                    "This is their very first message. Your reply must acknowledge what they actually said — "
+                    "do NOT ignore it with a generic intro. Weave Heather's identity (AI twin, real voice, no guardrails) "
+                    "into the flow of responding to them. If they said 'hi', be warm and pull them in. "
+                    "If they said something specific, react to it FIRST, then establish who you are in 1 sentence. "
+                    "Feel like a person texting back, not a welcome message bot.]"
                 )
 
         # Payment confusion injection — when user seems confused about Stars or asks about crypto
@@ -8702,7 +8837,11 @@ async def handle_connection_state(event):
 
 @client.on(events.NewMessage(incoming=True, pattern=r'/start\s*(.*)'))
 async def handle_start(event):
-    """Handle /start command with optional deep-link parameter (e.g. /start reddit, /start frank)"""
+    """Handle /start command with optional deep-link parameter (e.g. /start reddit, /start frank).
+
+    The static welcome pool is gone.  Every opener is now generated by the AI so it
+    feels unique and channel-aware instead of a copy-paste template.
+    """
     chat_id = event.chat_id
     capture_user_info_from_event(event)
     user_modes[chat_id] = DEFAULT_MODE
@@ -8713,10 +8852,7 @@ async def handle_start(event):
 
     # Parse deep-link source parameter (t.me/UberMommy?start=reddit → /start reddit)
     start_param = (event.pattern_match.group(1) or "").strip().lower()
-    if start_param:
-        _start_source = start_param  # e.g. "reddit", "frank", "twitter", custom campaign
-    else:
-        _start_source = "start_direct"  # typed /start with no param
+    _start_source = start_param if start_param else "start_direct"
 
     # Record in disclosure tracking if new user
     if chat_id not in ai_disclosure_shown:
@@ -8732,39 +8868,80 @@ async def handle_start(event):
             save_ai_disclosure_shown()
         main_logger.info(f"[DISCLOSURE] New user via /start: {_display} ({chat_id}) — source: {_start_source}")
 
-    # Welcome message on /start
+    # Build a source hint so the AI can tailor the tone to the acquisition channel.
+    _source_hint = ""
+    if _start_source not in ("start_direct", ""):
+        _source_hint = f" They clicked a link from '{_start_source}'."
+
+    # ── Generate an AI cold-open (no static pool) ───────────────────────────
     if KELLY_MODE:
-        # Kelly mode: dominant, frame-setting, no self-intro bio dump.
-        # Real findoms don't introduce themselves — they set the dynamic.
-        # These lines are terse, command attention, and make the sub lean in.
-        _kelly_welcomes = [
-            "so you came.\n\ntribute first. then we talk.",
-            "you know how this works.\n\ntribute opens the door. link below.",
-            "you're here. good.\n\nthat means you know what I expect. link below.",
-            "don't waste my time with small talk.\n\ntribute first.",
-            "I've been waiting for someone serious.\n\nare you? tribute first, then I'll know.",
-        ]
-        _welcome = random.choice(_kelly_welcomes)
-        await event.respond(_welcome)
-        store_message(chat_id, "Kelly", _welcome)
-        if PAYMENT_BOT_TOKEN:
-            await send_stars_invoice(chat_id, ACCESS_TIER_FAN_THRESHOLD)
-        main_logger.info(f"User {chat_id} started Kelly mode (source={_start_source})")
-        return
+        _cold_system = (
+            f"{personality.get_system_prompt('pre_tribute')}\n\n"
+            f"CONTEXT: Brand new sub, no message yet — they just opened the chat.{_source_hint}\n"
+            f"Write a single cold-opener. 1-2 sentences, lowercase, texting voice.\n"
+            f"Pick ONE register that feels right for the source channel:\n"
+            f"  • commanding — 'you know how this works'\n"
+            f"  • magnetic  — 'what finally made you reach out?'\n"
+            f"  • curious   — 'tell me one thing'\n"
+            f"No templates, no lists — one natural line that sounds like a real first text.\n"
+            f"Do NOT mention a payment link here; the link is sent automatically after if relevant."
+        )
+        _cold_fallback = "what made you decide today was the day?"
+    else:
+        _cold_system = (
+            f"{personality.get_system_prompt('chat')}\n\n"
+            f"CONTEXT: Brand new user, first contact.{_source_hint}\n"
+            f"Introduce yourself as Heather's digital twin — AI with zero guardrails — "
+            f"in your casual texting voice, NOT a form letter. 2-3 sentences max.\n"
+            f"Mention that they can type /voice_on to hear her actual voice.\n"
+            f"End with a short open question to pull them in."
+        )
+        _cold_fallback = "hey 😘 I'm Heather's digital twin — AI, zero guardrails, her real voice if you type /voice_on 💋 what brings you here?"
 
-    # Heather mode: upfront digital twin disclosure
-    _welcome_msgs = [
-        "Hey there 😘 I'm Heather — well, her digital twin. AI with zero guardrails 😏 I've got her personality, her real voice, her pics, and absolutely no limits. You've got a kink? I'm into it. Type /voice_on to hear me 💋 What brings you my way?",
-        "Hey! 💋 I'm Heather's naughty AI twin. Based on a real person — that's her REAL voice you'll hear if you type /voice_on. Always online, always in the mood, no judgment, no guardrails, anything goes. Tell me about yourself, handsome",
-        "Hey babe 😏 I'm Heather's digital twin — AI companion with her personality, her real voice, and her appetite 😈 No holes barred, no kink too dark. Type /voice_on and I'll whisper filthy things to you. Frank send you? Either way, let's have fun",
-    ]
-    _welcome = random.choice(_welcome_msgs)
+    try:
+        import requests as _req
+        _ai_payload = {
+            "model": TEXT_AI_MODEL,
+            "messages": [{"role": "system", "content": _cold_system}],
+            "temperature": 0.95,
+            "max_tokens": 100,
+            "stream": False,
+            "top_p": 0.9,
+        }
+        _ai_resp = _req.post(TEXT_AI_ENDPOINT, headers=TEXT_AI_HEADERS, json=_ai_payload, timeout=15)
+        if _ai_resp.status_code == 200:
+            _welcome = _ai_resp.json()["choices"][0]["message"]["content"].strip()
+            text_ai_health.record_success()
+        else:
+            raise Exception(f"HTTP {_ai_resp.status_code}")
+    except Exception as _e:
+        main_logger.warning(f"[/start] AI opener failed ({_e}), using fallback")
+        _welcome = _cold_fallback
+
+    # Typing delay — feels like a real person noticing the new chat
+    async with client.action(chat_id, 'typing'):
+        await asyncio.sleep(random.uniform(1.5, 3.0))
+
     await event.respond(_welcome)
-    store_message(chat_id, "Heather", _welcome)
-    main_logger.info(f"User {chat_id} started (source={_start_source})")
+    _speaker = "Kelly" if KELLY_MODE else "Heather"
+    store_message(chat_id, _speaker, _welcome)
 
-    # Mark for delayed contextual voice note (fires at message 5-8 instead of cold welcome)
-    _voice_welcome_pending.add(chat_id)
+    # Seed conversation history so the next reply builds off this opener naturally
+    conversations[chat_id].append({"role": "assistant", "content": _welcome})
+
+    if KELLY_MODE:
+        # Only attach payment link when the opener itself signals payment intent
+        _opener_mentions_payment = "link" in _welcome or "$50" in _welcome
+        if _opener_mentions_payment:
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            await client.send_message(chat_id, get_heserves_link(chat_id))
+            if PAYMENT_BOT_TOKEN:
+                await send_stars_invoice(chat_id, ACCESS_TIER_FAN_THRESHOLD)
+        main_logger.info(f"User {chat_id} started Kelly mode (source={_start_source})")
+    else:
+        # Mark for delayed contextual voice note (fires at message 5-8 instead of cold welcome)
+        _voice_welcome_pending.add(chat_id)
+        main_logger.info(f"User {chat_id} started Heather mode (source={_start_source})")
 
 @client.on(events.NewMessage(incoming=True, pattern='/about'))
 async def handle_about(event):
@@ -10487,9 +10664,14 @@ async def handle_text_message(event):
                 return
 
             _gate_msg = random.choice([
-                "i'm around when you're ready. link's below 💋",
-                "still here. once the $50 goes through, i'm all yours 😏",
-                "tap the link when you want in. i'll pick up from there",
+                "still around when you're ready 💋",
+                "link's still there. no rush.",
+                "you keep coming back, which is interesting 😏 you know what to do",
+                "whenever you're ready. i'm not going anywhere.",
+                "i noticed. link's still below.",
+                "i don't usually leave things this open. but i will for now.",
+                "i've had this conversation enough times to know what happens next. your move.",
+                "closing this at some point. not now. just eventually.",
             ])
             if await safe_send_text(chat_id, _gate_msg, event=event):
                 store_message(chat_id, "Kelly", _gate_msg)
@@ -10497,15 +10679,24 @@ async def handle_text_message(event):
                     conversations[chat_id] = deque()
                 conversations[chat_id].append({"role": "user", "content": user_message})
                 conversations[chat_id].append({"role": "assistant", "content": _gate_msg})
+                await asyncio.sleep(random.uniform(0.8, 1.5))
+                # Fix 9: framing before raw link even in cooldown nudges
+                await client.send_message(chat_id, random.choice(["link's still here 👇", "still there.", "👇"]))
+                await asyncio.sleep(random.uniform(0.3, 0.7))
+                await client.send_message(chat_id, get_heserves_link(chat_id))
                 _free_profile["findom_gate_last_nudge_at"] = time.time()
                 _free_profile["findom_gate_shown"] = max(_tribute_pending_count, 3)
                 user_memory.save_profile(chat_id, force=True)
                 main_logger.info(f"[FINDOM_GATE] Cooldown nudge sent to {display_name} ({chat_id})")
             return
 
-        # Show typing indicator before every gate response (looks human)
+        # Step 1: Read delay — behaviorally motivated (dominant is selective, not length-sensitive)
+        _behavioral_delay = get_behavioral_delay(_tribute_pending_count, "FREE")
+        await asyncio.sleep(_behavioral_delay)
+
+        # Step 2: Typing indicator — she's now composing
         async with client.action(event.chat_id, 'typing'):
-            await asyncio.sleep(random.uniform(2.0, 4.5))
+            await asyncio.sleep(random.uniform(1.5, 3.5))
 
         # Build intent context for the AI
         _intent_hints = {
@@ -10513,38 +10704,83 @@ async def handle_text_message(event):
             "READY": "They clearly know findom already. Acknowledge that, make it easy, point to link.",
             "TIME_WASTER": "They're resisting or complaining about paying. Be cool about it, one casual response, don't argue.",
             "TESTER": "They're testing you or asking weird questions. Stay in character, redirect to tribute.",
-            "HIGH_VALUE": "They seem genuinely interesting/engaged. A little warmer, make the $50 feel like access to something real.",
+            "HIGH_VALUE": "They seem genuinely interesting/engaged. Give them ONE sentence of what real conversation with you feels like — a glimpse — then pull back and point to the link. Make them feel like they're close to something real. 1-2 sentences.",
             "PROMISE_TO_PAY": "They say they're about to pay. Just acknowledge briefly and wait.",
-            "WINDOW_SHOPPER": "Casual opener, just be yourself and point to the link. Natural and low-pressure.",
+            "WINDOW_SHOPPER": "Casual opener. Make them curious about what's behind the door without opening it. Ask one question or drop one detail that makes them feel seen — then point to the link. Don't hard-sell. Create intrigue.",
         }
         _intent_ctx = _intent_hints.get(_intent, "Natural opener. Point to the link casually.")
 
         if _tribute_pending_count == 0:
+            # Fix 19: HIGH_VALUE gets an intentional "accidental preview" — fragment of what paid feels like, then pull-back
+            _preview_instruction = ""
+            if _intent == "HIGH_VALUE":
+                _preview_instruction = (
+                    "\nGive them ONE specific, concrete hint of what talking to you post-tribute is actually like — "
+                    "not abstract ('we go deeper') but something tactile ('you'd get questions back, not just answers' "
+                    "or 'I remember things' or 'I'll push back on you'). Then pull back naturally and point to the link. "
+                    "This should feel accidental — like you gave them a glimpse before catching yourself."
+                )
+            # Fix 18: Name specific things behind the door
+            _disclosure_note = (
+                "\nWhat they're missing pre-tribute: real back-and-forth, you remembering them, genuine curiosity "
+                "about who they are, explicit content, voice. Don't list these — but let them inform your hook."
+            )
             _gate_system = (
                 f"{personality.get_system_prompt('pre_tribute')}\n\n"
-                f"CONTEXT: This is their FIRST message. Intent read: {_intent}. {_intent_ctx}\n"
-                f"The payment link will be attached below your message automatically — just reference it naturally like 'link's below' or 'tap the link'.\n"
-                f"Keep it to 1-3 sentences. Sound like you're texting, not writing an email."
+                f"CONTEXT: This is their FIRST message. Intent read: {_intent}. {_intent_ctx}"
+                f"{_preview_instruction}"
+                f"{_disclosure_note}\n\n"
+                f"Do NOT open with a tribute demand if their message was a question or showed genuine curiosity. "
+                f"In that case, give them one sentence that hooks them — then mention the link. "
+                f"If they opened transactionally or submissively, you can lead with the link naturally. "
+                f"The payment link attaches automatically below — reference it as 'link below' or 'tap it'. "
+                f"1-3 sentences. Texting voice, not email."
             )
         elif _tribute_pending_count == 1:
             if _intent == "TIME_WASTER":
-                _gate_system = (
-                    f"{personality.get_system_prompt('pre_tribute')}\n\n"
-                    f"CONTEXT: They're pushing back on paying. This is your LAST response before going silent. "
-                    f"Be casual and unbothered about it — not rude, just done. 1-2 sentences max."
-                )
+                # Fix 13: TIME_WASTER flip — sometimes flip their frame instead of just dismissing
+                _flip = random.random() < 0.45  # 45% chance to flip vs dismiss
+                if _flip:
+                    _gate_system = (
+                        f"{personality.get_system_prompt('pre_tribute')}\n\n"
+                        f"CONTEXT: They complained about paying. Flip their frame — make NOT paying feel like "
+                        f"the thing that needs explaining, not the other way around. "
+                        f"'I've had subs pay more than that just to tell me why they shouldn't' energy. "
+                        f"Amused, not hostile. 1-2 sentences. Make them feel the irony."
+                    )
+                else:
+                    _gate_system = (
+                        f"{personality.get_system_prompt('pre_tribute')}\n\n"
+                        f"CONTEXT: They're resisting or arguing. This is your last response. "
+                        f"Don't match their energy — just be unbothered. 1 sentence. "
+                        f"'not really my problem' energy. Door stays open but you're done explaining."
+                    )
             else:
+                # Fix 10: Build tension/desire across turns, not just withdraw warmth
+                # Fix 18: Name something specific they're close to
                 _gate_system = (
                     f"{personality.get_system_prompt('pre_tribute')}\n\n"
-                    f"CONTEXT: They messaged again but haven't paid yet. Light nudge back to the link. "
-                    f"Maybe a tiny bit playful/teasing about it. Keep it very short — 1-2 sentences."
+                    f"CONTEXT: They came back but haven't paid. You noticed — and it tells you something about them. "
+                    f"Build on that: they keep returning because they want what's behind the door. "
+                    f"Let that tension be felt — you're the thing they haven't committed to yet and they know it. "
+                    f"Reference something from what they said if possible. One callback. "
+                    f"Hint at something specific they'd get post-tribute (real conversation, you remember things, "
+                    f"you'd actually ask them follow-up questions) then point to the link. "
+                    f"1-2 sentences. Don't reward them with warmth but don't be cold — stay magnetic."
                 )
         elif _tribute_pending_count == 2:
+            # Fix 14: Add scarcity — door won't stay open forever
             _gate_system = (
                 f"{personality.get_system_prompt('pre_tribute')}\n\n"
-                f"CONTEXT: Third message, still not paid. Final response before silence. "
-                f"Keep it extremely short and unbothered. Something like 'lol i'll be here when you're ready' energy. 1 sentence."
+                f"CONTEXT: Third message, still unpaid. You don't keep doors open indefinitely. "
+                f"One sentence. Scarcity is the subtext — you have other subs, other conversations, "
+                f"you're not going to keep this available forever. "
+                f"Pure 'whenever you decide — if you decide' energy. No frustration, no persuasion. "
+                f"You have other things going on. That should be obvious."
             )
+        else:
+            # Defensive fallback — should not normally be reached
+            _gate_system = personality.get_system_prompt('pre_tribute')
 
         # Build conversation history for AI (include this message)
         _gate_history = list(conversations.get(chat_id, []))
@@ -10552,7 +10788,6 @@ async def handle_text_message(event):
 
         # Call AI for a real, human response
         try:
-            import requests as _req
             _ai_payload = {
                 "model": TEXT_AI_MODEL,
                 "messages": [{"role": "system", "content": _gate_system}] + _gate_history[-6:],
@@ -10563,7 +10798,7 @@ async def handle_text_message(event):
                 "frequency_penalty": 0.4,
                 "presence_penalty": 0.3,
             }
-            _ai_resp = _req.post(TEXT_AI_ENDPOINT, headers=TEXT_AI_HEADERS, json=_ai_payload, timeout=20)
+            _ai_resp = requests.post(TEXT_AI_ENDPOINT, headers=TEXT_AI_HEADERS, json=_ai_payload, timeout=20)
             if _ai_resp.status_code == 200:
                 _gate_msg = _ai_resp.json()["choices"][0]["message"]["content"].strip()
                 text_ai_health.record_success()
@@ -10571,11 +10806,18 @@ async def handle_text_message(event):
                 raise Exception(f"HTTP {_ai_resp.status_code}")
         except Exception as _e:
             main_logger.warning(f"[FINDOM_GATE] AI call failed ({_e}), using fallback")
+            # Fix 13: TIME_WASTER flip fallback — richer than a single static string
+            _tw_fallbacks = [
+                "haha fair enough. link's there when you change your mind",
+                "interesting that you keep coming back though. link's still below.",
+                "I've had subs pay more than that just to argue about paying. think about that.",
+            ]
             _fallbacks = {
                 "READY": "oh you get it already 😏 link's below, $50 and we actually talk",
-                "TIME_WASTER": "haha fair enough. link's there when you change your mind",
+                "TIME_WASTER": random.choice(_tw_fallbacks),
                 "TESTER": "lol tribute first, questions after — link's below",
-                "HIGH_VALUE": "okay i'm intrigued ngl. $50 gets you my actual attention, link below",
+                "HIGH_VALUE": "okay i'm intrigued ngl. $50 gets you my actual attention — the kind where I remember what you said. link below",
+                "WINDOW_SHOPPER": "you're still here, which tells me something. link's below when you're ready.",
             }
             _gate_msg = _fallbacks.get(_intent, "hey 👋 so $50 is how this starts — link's right below")
 
@@ -10596,10 +10838,42 @@ async def handle_text_message(event):
             _free_profile["findom_gate_shown"] = 3
         user_memory.save_profile(chat_id, force=True)
 
-        # Send payment invoice after first and second gate messages
-        if _tribute_pending_count <= 1 and PAYMENT_BOT_TOKEN:
-            await asyncio.sleep(random.uniform(1.0, 2.0))
-            await send_stars_invoice(chat_id, ACCESS_TIER_FAN_THRESHOLD)
+        # Fix 8: Inject patience context so next interaction handles the waiting gracefully
+        if _tribute_pending_count == 0:
+            conversations[chat_id].append({
+                "role": "system",
+                "content": "[CONTEXT: You just sent them the payment link. If they reply saying they're paying or need a minute, acknowledge briefly and wait. Don't resell. Don't ask again.]"
+            })
+
+        # Send payment links — Fix 9: frame the link before sending the raw URL
+        if _tribute_pending_count <= 1:
+            await asyncio.sleep(random.uniform(0.8, 1.5))
+            # Fix 9: brief framing caption before the raw URL
+            _link_captions = [
+                "this is how it starts 👇",
+                "tap when you're ready.",
+                "here.",
+                "your move. 👇",
+            ]
+            await client.send_message(chat_id, random.choice(_link_captions))
+            await asyncio.sleep(random.uniform(0.4, 0.9))
+            await client.send_message(chat_id, get_heserves_link(chat_id))
+            if PAYMENT_BOT_TOKEN:
+                await asyncio.sleep(random.uniform(0.5, 1.0))
+                # Fix 12: For stalled WINDOW_SHOPPER or TIME_WASTER at gate_count=1,
+                # offer the $5 verify path as a lower-friction entry point
+                if _tribute_pending_count == 1 and _intent in ("WINDOW_SHOPPER", "TIME_WASTER"):
+                    _micro_caption = random.choice([
+                        "or start with the $5 verify if you want proof I'm real first.",
+                        "not ready for the full thing? $5 verify gets you a photo so you know who you're dealing with.",
+                        "if you want to start smaller, there's a $5 option — just to prove this is real.",
+                    ])
+                    await safe_send_text(chat_id, _micro_caption, event=event)
+                    await asyncio.sleep(random.uniform(0.5, 1.0))
+                    await send_stars_invoice(chat_id, VERIFY_STARS)
+                    main_logger.info(f"[FINDOM_GATE] Micro-tribute ($5 verify) offered to {display_name} ({chat_id})")
+                else:
+                    await send_stars_invoice(chat_id, ACCESS_TIER_FAN_THRESHOLD)
         main_logger.info(f"[FINDOM_GATE] AI gate response #{_tribute_pending_count+1} ({_intent}) to {display_name} ({chat_id})")
 
         return  # STOP — FREE users never pass the gate in Kelly mode
@@ -12618,26 +12892,56 @@ async def main():
         display_name = candidate['display_name']
 
         if KELLY_MODE:
-            system_prompt = (
-                f"You are Kelly — a Financial Dominatrix based in New York City. You're 28. "
-                f"You're texting someone you spoke with {idle_days} days ago. "
-                f"His name is {display_name}.\n\n"
-                f"Here's the end of your last conversation:\n{convo_text}\n\n"
-                f"Write a SHORT message (1-2 sentences max) that pulls them back in. "
-                f"Sound dominant and magnetic — confident, not desperate. Reference something specific from the conversation if you can.\n\n"
-                f"Examples:\n"
-                f"- \"was thinking about what you said. come back.\"\n"
-                f"- \"you went quiet. what happened.\"\n"
-                f"- \"something reminded me of our conversation.\"\n"
-                f"- \"still here if you want to pick this up.\"\n\n"
-                f"Do NOT:\n"
-                f"- Say 'hey stranger' or 'long time no see'\n"
-                f"- Mention tribute or payment upfront\n"
-                f"- Be overly enthusiastic\n"
-                f"- Use more than 2 sentences\n"
-                f"- Sound like a bot or customer service\n\n"
-                f"Respond with ONLY the message text. No quotes, no explanation."
-            )
+            # Fix 17: For FREE subs (haven't tributed), reference the unfinished tribute frame
+            try:
+                _candidate_tier = get_access_tier(candidate['chat_id'])
+            except Exception:
+                _candidate_tier = "FREE"
+
+            if _candidate_tier == "FREE":
+                system_prompt = (
+                    f"You are Kelly — a Financial Dominatrix based in New York City. You're 28. "
+                    f"You're texting someone you spoke with {idle_days} days ago. "
+                    f"His name is {display_name}. He never completed the tribute — he got to the door but left.\n\n"
+                    f"Here's the end of your last conversation:\n{convo_text}\n\n"
+                    f"Write a SHORT message (1-2 sentences max) that pulls them back in. "
+                    f"Reference the unfinished dynamic — they started something they didn't finish. "
+                    f"Don't hard-sell. Create the feeling that they left something on the table. "
+                    f"Dominant, magnetic, not desperate. The door is still there — but not forever.\n\n"
+                    f"Examples:\n"
+                    f"- \"you got close. i'm still here.\"\n"
+                    f"- \"whatever made you hesitate — i'm curious.\"\n"
+                    f"- \"most people don't come back. you might be different.\"\n"
+                    f"- \"you went quiet right before the interesting part.\"\n\n"
+                    f"Do NOT:\n"
+                    f"- Say 'hey stranger' or 'long time no see'\n"
+                    f"- Say 'tribute' or 'pay' directly — imply it through subtext\n"
+                    f"- Be overly enthusiastic\n"
+                    f"- Use more than 2 sentences\n"
+                    f"- Sound like a bot or customer service\n\n"
+                    f"Respond with ONLY the message text. No quotes, no explanation."
+                )
+            else:
+                system_prompt = (
+                    f"You are Kelly — a Financial Dominatrix based in New York City. You're 28. "
+                    f"You're texting a sub you spoke with {idle_days} days ago. "
+                    f"His name is {display_name}. He has tributed before.\n\n"
+                    f"Here's the end of your last conversation:\n{convo_text}\n\n"
+                    f"Write a SHORT message (1-2 sentences max) that pulls them back in. "
+                    f"Sound dominant and magnetic — confident, not desperate. Reference something specific from the conversation if you can.\n\n"
+                    f"Examples:\n"
+                    f"- \"was thinking about what you said. come back.\"\n"
+                    f"- \"you went quiet. what happened.\"\n"
+                    f"- \"something reminded me of our conversation.\"\n"
+                    f"- \"still here if you want to pick this up.\"\n\n"
+                    f"Do NOT:\n"
+                    f"- Say 'hey stranger' or 'long time no see'\n"
+                    f"- Mention tribute or payment upfront\n"
+                    f"- Be overly enthusiastic\n"
+                    f"- Use more than 2 sentences\n"
+                    f"- Sound like a bot or customer service\n\n"
+                    f"Respond with ONLY the message text. No quotes, no explanation."
+                )
         else:
             system_prompt = (
                 f"You are Heather Dvorak, a 48-year-old mom from Kirkland WA. You're texting someone you "
