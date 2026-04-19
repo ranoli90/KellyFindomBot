@@ -219,3 +219,65 @@ aws logs tail /ecs/kelly-prod/bot --since 1h
 - [ ] Enable MFA on your AWS root account
 - [ ] Review IAM permissions — ECS task role should be read-only for Secrets Manager
 - [ ] Set up Telegram 2FA on the account the bot uses
+
+---
+
+## Critical First-Run Steps (Often Missed)
+
+### 1. Session file must exist before ECS can run
+
+The Telethon session file cannot be created interactively inside ECS. You **must**:
+
+1. Create the session locally first (see Local Test Run in DEVELOPER_HANDOFF.md)
+2. Upload to S3:
+   ```bash
+   aws s3 cp heather_session.session \
+     s3://kelly-prod-media-$(aws sts get-caller-identity --query Account --output text)/session/heather_session.session
+   ```
+3. The ECS container startup downloads it from S3 on first boot
+
+### 2. Set BOT_PERSONA=kelly
+
+**This is required.** Without it, the bot runs as Heather (companion mode, no tribute gate).
+
+Verify in Secrets Manager:
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id kellyfindombot/prod/secrets \
+  --query 'SecretString' --output text | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('BOT_PERSONA','NOT SET'))"
+```
+
+### 3. Payment bot must be running and configured
+
+The Stars tribute system requires `PAYMENT_BOT_TOKEN` to be set AND the bot must be authorized for Telegram Stars payments via BotFather:
+
+```
+@BotFather → /mybots → [your tribute bot] → Payments → Enable Telegram Stars
+```
+
+Without this, the gate fires and users see an invoice but can never complete payment.
+
+### 4. Verify end-to-end before going live
+
+From a test Telegram account (not your admin account):
+- [ ] Message the bot account — should receive dominant gate response + Stars invoice
+- [ ] Invoice appears and is payable
+- [ ] After test payment, send another message — should receive LLM-generated Kelly response (no gate)
+- [ ] Admin command `/stats` works from your Saved Messages
+
+---
+
+## Telegram Account Safety in AWS
+
+When the bot is running on ECS (always-on), extra care is needed:
+
+- **The bot only responds to DMs from known users or new contacts who message first.** It never initiates contact with strangers.
+- **Re-engagement sends max 2 messages/day** to users who previously chatted, with 2-5 minute gaps.
+- **FloodWaitError** is auto-handled (bot sleeps required time)
+- **PeerFloodError** triggers a 24-hour re-engagement pause — check logs if this appears
+- If the account gets a spam restriction, stop the ECS service temporarily:
+  ```bash
+  aws ecs update-service --cluster kelly-prod-cluster --service kelly-bot --desired-count 0
+  # Wait 24-48 hours, then:
+  aws ecs update-service --cluster kelly-prod-cluster --service kelly-bot --desired-count 1
+  ```
