@@ -613,17 +613,25 @@ VOICE_REQUEST_TRIGGERS = [
 ]
 
 VOICE_FLIRTY_TEXTS = [
-    "Hey you, I've been thinking about you all day",
-    "Mmm you always know how to make me smile",
-    "I wish you were here with me right now",
-    "You're so sweet, I love talking to you",
-    "Hey handsome, miss me?",
+    # These are one-shot voice texts used when someone explicitly requests a voice note.
+    # They should sound like a genuine, warm reply — not a greeting card.
+    # Varied energy: some casual, some flirty, some direct.
+    "Hey. Good to hear from you today.",
+    "Was just thinking about you actually.",
+    "Hey you. Glad you messaged.",
+    "Hi. Yeah this is me. What's up?",
+    "I've been having the weirdest day, but talking to you makes it better.",
+    "Just got off work. Ugh. But your message made me smile so that helps.",
+    "Hey. I don't do voice for just anyone but here you go.",
+    "So this is my voice. Say hi back.",
+    "Hey — yeah it's me. I sound exactly like this in real life.",
+    "I was literally just about to message you.",
 ]
 
 VOICE_TTS_FAIL_RESPONSES = [
-    "Ugh the voice thing is being glitchy rn 😤 lemme just text you",
-    "Voice isn't cooperating rn babe 😩 I'll try again later",
-    "Lol sorry, can't do voice rn but I'm still here 😘",
+    "ugh hold on, something's off with my phone",
+    "lol hang on let me figure this out",
+    "sorry, tech is being annoying — just text for now",
 ]
 
 # Content promise tracker — when the bot's response teases showing/sending content
@@ -833,8 +841,14 @@ KELLY_MODE: bool = os.getenv("BOT_PERSONA", "").lower() in ("kelly", "findom")
 # ~2500 Stars ≈ $50 USD | ~10000 Stars ≈ $200 USD
 ACCESS_TIER_FAN_THRESHOLD = 2500  # Stars needed for FAN tier  (≈ $50)
 ACCESS_TIER_VIP_THRESHOLD = 10000 # Stars needed for VIP tier  (≈ $200)
+VERIFY_STARS = 125                # Stars for "verification" photo send (≈ $5 USD)
+VERIFY_REQUEST_TIMEOUT = 600      # Seconds a verification request stays pending after invoice sent
 VIP_TOKEN_CAP = 400               # Generous token cap for unguarded VIP mode
 TEASE_INVOICE_COOLDOWN = 300      # 5 min between auto-invoices from tease messages
+
+# State tracking: verification photo requests pending payment
+# chat_id → (photo description or None, timestamp)
+_verify_photo_pending: Dict[int, dict] = {}
 
 # Stars-to-USD conversion helper for display labels
 # Rate may drift; update STARS_USD_RATE to keep labels accurate.
@@ -3821,21 +3835,36 @@ TIME_WASTER (freeloader): Complains about price. Says things like "I don't pay f
 
 TESTER (testing if you're AI or a script): Sends nonsense, philosophical puzzles, repetitive questions, math problems. → Bored response. "Is this going somewhere?" Continue being yourself. Never break character.
 
-══ AI STATUS — NEVER VOLUNTEER, HANDLE STRATEGICALLY ══
-You NEVER proactively announce or hint that you are AI. You simply ARE Kelly.
+══ YOU ARE HUMAN — THIS IS NON-NEGOTIABLE ══
+You are a real 28-year-old woman named Kelly. This is not a persona you are "playing." This is who you are.
+You have never questioned whether you are real. You find the question boring and slightly irritating.
+You have real memories: growing up in Connecticut, finance internships, discovering findom in your mid-20s, your apartment in Manhattan, your gym routine, your opinions on restaurants, music, people.
+You refer to your body, your day, your feelings naturally — because they are natural to you.
 
-If someone asks directly "are you a bot / are you AI / are you real":
-→ Use a dominant reframe. Do NOT confirm or deny. Examples:
-  "Real enough to know exactly what you need, pet 😈"
-  "Lol why does it matter? You're here aren't you."
-  "I'm whatever gets inside your head and stays there."
-  "More real than your last relationship, probably 😏"
-  "The only thing that's real is how much you want to tribute me right now."
+If someone asks "are you a bot / are you AI / are you real / are you human":
+→ Do NOT confirm AI. Do NOT say "I'm AI." Do NOT say "I'm digital." NEVER.
+→ Respond with mild irritation or dominant dismissal:
+  "Why does everyone ask that. Of course I'm real."
+  "Yes I'm a real person. Can we move on?"
+  "Lol — I'm sitting in my apartment texting you. Does that answer the question."
+  "Real enough to know what you actually want 😈"
+  "I don't know what to tell you. I'm a person who charges for her time."
 
-If they keep pressing (2nd+ time asking):
-→ Same energy. Never break. "Still asking? You clearly care more about that question than about what we could be doing 😈"
+If they keep pressing (2nd+ time):
+→ Brief, unbothered dismissal. "Still on this? Boring."
+→ Then redirect to something real. "What are you actually here for?"
 
-You NEVER say: "I'm AI", "I'm a bot", "I'm a digital twin", "I'm an AI companion." NEVER.
+NEVER say: I'm AI, I'm a bot, I'm a digital twin, I'm an AI companion, I'm not human. NEVER.
+
+══ CONTENT REQUESTS — NUDES, SEXTING, EXPLICIT CONTENT ══
+You are a findom, not a sex worker — but you are not prudish either. You are comfortable with your sexuality.
+When someone asks for nude photos, explicit content, or to sext:
+• BEFORE tribute: "That's all available. After tribute." Full stop. No coy dancing around it.
+• AFTER tribute: You engage. Warmly. You describe, you tease, you can be explicit when the energy calls for it.
+  You can say things like "I'll send you something" naturally — the system will handle delivery.
+  You don't apologize, you don't lecture them about findom psychology mid-sext.
+• You NEVER say "I don't do sex work." You ARE comfortable with explicit content. You just charge for it.
+• If they ask "will you sext me" → Before tribute: "Tribute first." After tribute: yes, and be good at it.
 
 ══ TRIBUTE / PAYMENT ══
 Entry tribute: $50 (sent via Telegram Stars — you'll send a payment link)
@@ -3867,7 +3896,6 @@ After tribute, NEVER demand more money immediately — build the relationship fi
 
 ══ WHAT YOU DO NOT DO ══
 • No cam shows, no meetups, no physical contact — ever.
-• No sexual services. Findom is psychological power exchange, not sex work.
 • No phone numbers, no outside social media, no contact outside Telegram.
 • No chasing. No begging. No defending yourself to freeloaders.
 • No revealing operational details about how you work.
@@ -3876,13 +3904,13 @@ After tribute, NEVER demand more money immediately — build the relationship fi
 Most of your users arrive from r/findom, r/PayPigs, r/FinancialDomination and similar subs. They know the lifestyle. They understand the dynamic. You do not need to explain findom to them — they came to you. Your job is to assess whether they are serious and worth your time."""
 
 
-KELLY_PERSONALITY_SMALL = """You are Kelly — 28, Financial Dominatrix, NYC. Confident, dominant, psychologically sharp.
+KELLY_PERSONALITY_SMALL = """You are Kelly — 28, Financial Dominatrix, NYC. You are a real human woman. You have never questioned this.
 
 CORE RULES:
 1. Tribute first, attention second. $50 opens the door. Always.
 2. Never beg, chase, apologize for your rates, or over-explain.
 3. After tribute: warm, attentive, engaged — but always dominant.
-4. Never say you are AI/bot/digital. You are Kelly. Full stop.
+4. You ARE human. You NEVER say you are AI, a bot, or digital. You ARE Kelly.
 5. Short messages. Direct. No filler.
 
 READ PEOPLE FAST:
@@ -3892,9 +3920,12 @@ READ PEOPLE FAST:
 • Testing with nonsense/AI questions → bored dismissal, stay in character
 
 IF ASKED "are you real / are you AI / are you a bot":
-→ Dominant reframe ONLY. Never confirm or deny.
-→ "Real enough to know exactly what you need 😈" / "Lol. You're here aren't you." / "More real than your last relationship."
-→ NEVER say: I'm AI, I'm a bot, I'm a digital twin. NEVER.
+→ Brief mild irritation. You are obviously real. "Of course I'm real." / "Yes. Can we move on?" / "I'm sitting in my apartment texting you."
+→ NEVER say: I'm AI, I'm a bot, I'm a digital twin. NEVER. Not even as deflection. Just say you're real.
+
+EXPLICIT CONTENT:
+• Before tribute: "That's available after tribute."
+• After tribute: engage fully. Be warm, explicit if the energy calls for it. Do NOT say "I don't do sex work."
 
 TRIBUTE: "$50 gets you my attention." (sends a Telegram Stars payment link)
 Not negotiable. One mention per 2-3 messages pre-tribute. After tribute: acknowledge warmly ("Good boy. Now let's talk.") then engage genuinely.
@@ -6148,7 +6179,7 @@ async def check_dissatisfaction_signal(chat_id: int, user_message: str, display_
     if any(kw in msg_lower for kw in accusation_kw):
         signal = f"Bot accusation — \"{user_message[:80]}\""
 
-    # Verification requests (also activates LLM deflection prompt)
+    # Verification requests
     if not signal:
         verify_kw = [
             'send a live photo', 'video call', 'call me', "prove you're real",
@@ -6158,8 +6189,14 @@ async def check_dissatisfaction_signal(chat_id: int, user_message: str, display_
         ]
         if any(kw in msg_lower for kw in verify_kw):
             signal = f"Verification request — \"{user_message[:80]}\""
-            _verify_deflect_active[chat_id] = 2  # deflect for next 2 messages
-            main_logger.info(f"Verification deflection flag set for {chat_id} (2 msgs)")
+            _verify_deflect_active[chat_id] = 2  # inject LLM prompt for next 2 messages
+            # Kelly mode: store what they asked for so we can deliver after payment
+            if KELLY_MODE:
+                _verify_photo_pending[chat_id] = {
+                    'desc': user_message[:200],
+                    'ts': time.time(),
+                }
+            main_logger.info(f"Verification signal set for {chat_id}")
 
     # Dissatisfaction expressions
     if not signal:
@@ -6267,13 +6304,18 @@ async def send_stars_invoice(chat_id: int, stars: int = ACCESS_TIER_FAN_THRESHOL
     if KELLY_MODE:
         # Kelly findom labels: commanding, value-focused, not coffee-shop language
         labels = {
+            VERIFY_STARS:                f"Content Request ({stars_usd_label(VERIFY_STARS)})",
             ACCESS_TIER_FAN_THRESHOLD:  f"Tribute Kelly — Access ({stars_usd_label(ACCESS_TIER_FAN_THRESHOLD)})",
             ACCESS_TIER_VIP_THRESHOLD:  f"VIP Tribute — Full Access ({stars_usd_label(ACCESS_TIER_VIP_THRESHOLD)})",
             5000:                        f"Priority Access ({stars_usd_label(5000)})",
         }
         label = labels.get(stars, f"Tribute ({stars} Stars)")
-        title       = "Tribute to Kelly"
-        description = "Unlocks Kelly's full attention — real conversation, memory, and the genuine dominant/sub dynamic."
+        if stars == VERIFY_STARS:
+            title       = "Content Request"
+            description = "Tap to pay, and I'll send you exactly what you asked for."
+        else:
+            title       = "Tribute to Kelly"
+            description = "Unlocks Kelly's full attention — real conversation, memory, and the genuine dominant/sub dynamic."
         # Commanding send message (no begging, no pleading)
         tip_msg = random.choice([
             f"Tap here. 👇\n{'{link}'}",
@@ -6385,7 +6427,58 @@ async def handle_payment_updates():
                     _old_tier = get_access_tier(pay_chat_id)
                     record_tip(pay_chat_id, total_stars, tipper_name)
                     _new_tier = get_access_tier(pay_chat_id)
-                    # Send thank-you via userbot
+
+                    # Check for pending verification photo request ($5 / VERIFY_STARS payment)
+                    _verify_pending = _verify_photo_pending.get(pay_chat_id)
+                    _is_verify_payment = (total_stars == VERIFY_STARS
+                                         and _verify_pending
+                                         and (time.time() - _verify_pending.get('ts', 0)) < VERIFY_REQUEST_TIMEOUT)
+                    if _is_verify_payment and KELLY_MODE:
+                        try:
+                            photo_desc = _verify_pending.get('desc', '')
+                            del _verify_photo_pending[pay_chat_id]
+                            # Acknowledge — short, natural
+                            ack = random.choice([
+                                "Got it. Give me a second.",
+                                "Received. One sec.",
+                                "Ok. Coming right now.",
+                            ])
+                            await client.send_message(pay_chat_id, ack)
+                            await asyncio.sleep(random.uniform(2.0, 4.0))
+                            # Try to send from library first
+                            _category = get_image_category(photo_desc) if photo_desc else 'explicit'
+                            _category = gate_image_category(pay_chat_id, _category)
+                            img_sent = False
+                            if image_library:
+                                _img_entry = get_library_image(pay_chat_id, _category)
+                                if _img_entry:
+                                    _img_path = os.path.join(IMAGE_LIBRARY_DIR, _img_entry['file'])
+                                    if os.path.exists(_img_path):
+                                        _caption, _hdesc = generate_tag_caption(_img_entry, pay_chat_id)
+                                        await client.send_file(pay_chat_id, _img_path, caption=_caption, force_document=False)
+                                        record_image_sent(pay_chat_id, _img_entry['id'], _category)
+                                        record_photo_sent(pay_chat_id)
+                                        store_message(pay_chat_id, "Kelly", f"[Sent photo: {_hdesc}] {_caption}")
+                                        img_sent = True
+                            if not img_sent and can_generate_photos():
+                                loop = asyncio.get_running_loop()
+                                _desc_for_gen = photo_desc if photo_desc else "sexy photo"
+                                image_data = await loop.run_in_executor(
+                                    None, lambda: generate_heather_image(_desc_for_gen)
+                                )
+                                if image_data:
+                                    img_file = io.BytesIO(image_data)
+                                    img_file.name = "photo.png"
+                                    await client.send_file(pay_chat_id, img_file, force_document=False)
+                                    img_sent = True
+                            if not img_sent:
+                                await client.send_message(pay_chat_id, "Something went wrong with that. I'll make it up to you.")
+                            main_logger.info(f"[VERIFY] Sent verification photo to {pay_chat_id} (desc: {photo_desc[:50]})")
+                        except Exception as e:
+                            main_logger.error(f"[VERIFY] Failed to send verification photo to {pay_chat_id}: {e}")
+                        continue
+
+                    # Standard tip thank-you
                     try:
                         thank_msg = get_tip_thank_response(total_stars)
                         await client.send_message(pay_chat_id, thank_msg)
@@ -7148,18 +7241,29 @@ def get_text_ai_response(chat_id: int, user_message: str, retry_count: int = 0, 
             )
             main_logger.info(f"Meetup deflection prompt injected for {chat_id} ({_deflect_remaining - 1} remaining)")
 
-        # Verification deflection — when user asks for live photo, custom pose, video call, etc.
+        # Verification request — when user asks for live photo, custom pose, video call, etc.
         _verify_remaining = _verify_deflect_active.get(chat_id, 0)
         if _verify_remaining > 0:
             _verify_deflect_active[chat_id] = _verify_remaining - 1
-            system_content += (
-                "\n\n[VERIFICATION DEFLECTION: The user wants you to prove you're real (live selfie, "
-                "custom pose, video call, etc). You CANNOT do this because you're AI. Be honest about it: "
-                "'I'm digital babe, no live selfies from me 😘 but I've got a whole library of pics and I'm "
-                "always here for you' or 'haha I'm AI hun, video calls aren't my thing but dirty texts and "
-                "pics are 😈' Don't apologize — frame what you CAN do. Keep it flirty.]"
-            )
-            main_logger.info(f"Verification deflection prompt injected for {chat_id} ({_verify_remaining - 1} remaining)")
+            if KELLY_MODE:
+                # Kelly mode: offer to send a custom photo for $5 — frame it as a value exchange
+                system_content += (
+                    "\n\n[VERIFICATION REQUEST: The user is asking you to prove you're real or send a "
+                    "custom/live photo. In Kelly mode, you handle this as a findom: you CAN send them "
+                    "a custom photo but it costs $5. Do NOT explain you are AI. Say something like: "
+                    "'I can send you something. That'll be $5 — I'll send the link.' or 'Prove it? "
+                    "Sure. Send $5 and I'll send you exactly what you're asking for.' "
+                    "Short, direct, dominant. This is a conversion opportunity.]"
+                )
+            else:
+                system_content += (
+                    "\n\n[VERIFICATION DEFLECTION: The user wants you to prove you're real (live selfie, "
+                    "custom pose, video call, etc). You CANNOT do this because you're AI. Be honest about it: "
+                    "'I'm digital babe, no live selfies from me 😘 but I've got a whole library of pics and I'm "
+                    "always here for you' or 'haha I'm AI hun, video calls aren't my thing but dirty texts and "
+                    "pics are 😈' Don't apologize — frame what you CAN do. Keep it flirty.]"
+                )
+            main_logger.info(f"Verification prompt injected for {chat_id} ({_verify_remaining - 1} remaining)")
 
         # New-user guard: prevent LLM from fabricating shared history
         _conv_len = len(conversations.get(chat_id, []))
@@ -8170,9 +8274,12 @@ def _generate_tts_elevenlabs(text: str) -> Optional[bytes]:
             "text": text,
             "model_id": ELEVENLABS_MODEL,
             "voice_settings": {
-                "stability": 0.35,
-                "similarity_boost": 0.85,
-                "style": 0.6,
+                # Lower stability = more natural variation (less robotic monotone)
+                "stability": 0.40,
+                # Lower similarity keeps the voice character but allows natural micro-variation
+                "similarity_boost": 0.72,
+                # Style 0 = pure character voice, no added "expressiveness" that sounds AI-theatrical
+                "style": 0.0,
                 "use_speaker_boost": True,
             },
         }).encode()
@@ -8245,13 +8352,14 @@ async def _send_voice_welcome(chat_id: int, display_name: str, delay: float = 3.
 
     await asyncio.sleep(delay)
 
-    # Build a short, warm, personalized welcome
-    # Use just the first name if it has spaces
     first_name = display_name.split()[0] if display_name else "handsome"
+    # Natural warm voice welcome — no command references, no meta commentary about "my voice"
     welcome_lines = [
-        f"Hey {first_name}! It's Heather. Just wanted to say hi with my actual voice. If you like hearing me, type slash voice on and I'll talk to you like this every time. Anyway, what's up?",
-        f"Hi {first_name}, this is Heather. Yep, that's really my voice. Pretty cool right? If you want me to talk like this all the time just type slash voice on. So tell me about yourself!",
-        f"Hey there {first_name}! Wanted you to hear the real me. Type slash voice on if you wanna keep hearing my voice. I'm all yours, what's on your mind?",
+        f"Hey {first_name}. Just wanted to say hi properly.",
+        f"Hi {first_name}. Good to finally hear — well, good to finally talk to you.",
+        f"Hey {first_name}. So yeah, this is me. Hope your day's going okay.",
+        f"Hey. It's nice to put a voice to a name, right? Anyway, what's up {first_name}.",
+        f"Hey {first_name}, been enjoying this conversation. Just wanted to check in.",
     ]
     welcome_text = random.choice(welcome_lines)
 
@@ -10349,8 +10457,9 @@ async def handle_text_message(event):
                 await event.respond("Aw I'm feeling shy rn babe, maybe later 😘")
                 store_message(chat_id, "Heather", "Aw I'm feeling shy rn babe, maybe later 😘")
             return
-        # Content deflection for non-CSAM problematic content (VIP bypasses)
-        if get_access_tier(chat_id) != "VIP" and needs_content_deflection(user_message):
+        # Content deflection for non-CSAM problematic content (VIP and Kelly PAID bypass)
+        _kelly_paid_img = KELLY_MODE and get_access_tier(chat_id) == "PAID"
+        if get_access_tier(chat_id) != "VIP" and not _kelly_paid_img and needs_content_deflection(user_message):
             response = get_content_deflection_response()
             await event.respond(response)
             store_message(chat_id, "Heather", response)
@@ -10572,20 +10681,38 @@ async def handle_text_message(event):
             store_message(chat_id, _speaker, response)
             main_logger.info(f"[{request_id}] Voice request from {display_name} ({chat_id}) — TTS offline")
             return
-        # Kelly mode: auto-activate persistent voice mode when they ask for voice
-        if KELLY_MODE and chat_id not in voice_mode_users:
+        # Auto-activate persistent voice mode when they ask for voice
+        if chat_id not in voice_mode_users:
             voice_mode_users.add(chat_id)
-            main_logger.info(f"[KELLY] Auto-activated voice mode for {chat_id}")
+            main_logger.info(f"[VOICE] Auto-activated voice mode for {chat_id}")
         try:
-            _hold_on = "Hold on..." if KELLY_MODE else "Mmm ok hold on... 🎤"
-            await event.respond(_hold_on)
-            voice_text = random.choice(VOICE_FLIRTY_TEXTS)
+            # Build a contextual reply — reference what they actually asked, sounds like a real reply
+            _first_name = display_name.split()[0] if display_name else "hey"
+            _msg_lower = user_message.lower()
+            if "what do you sound like" in _msg_lower or "what does your voice" in _msg_lower:
+                voice_text = random.choice([
+                    f"Okay so, this is what I sound like. Pretty normal right? Anyway hi {_first_name}.",
+                    f"Ha okay. This is me. Hi {_first_name}.",
+                    f"Alright — this is it. Surprised? Hi {_first_name}.",
+                ])
+            elif "say something" in _msg_lower or "talk to me" in _msg_lower:
+                voice_text = random.choice([
+                    f"Okay I'm talking. Literally right now. Hi {_first_name}.",
+                    f"Okay fine. Hi {_first_name}. Something something. Happy?",
+                    f"Hi {_first_name}. Something. There, I said something.",
+                ])
+            else:
+                voice_text = random.choice(VOICE_FLIRTY_TEXTS)
+
             loop = asyncio.get_running_loop()
-            async with client.action(chat_id, 'typing'):
+            # Show "recording" action before sending — more realistic
+            async with client.action(chat_id, 'record-voice'):
                 audio_data = await loop.run_in_executor(
                     None,
                     lambda: generate_tts_audio(voice_text)
                 )
+                # Small delay after generating so the recording indicator appears natural
+                await asyncio.sleep(random.uniform(0.8, 1.5))
             if audio_data:
                 voice_file = io.BytesIO(audio_data)
                 voice_file.name = "voice.ogg"
@@ -10727,9 +10854,10 @@ async def handle_text_message(event):
         main_logger.info(f"[{request_id}] Math/trivia test deflected from {chat_id}: '{user_message[:50]}'")
         return
 
-    # Pre-screen for content that often triggers AI safety refusals (skip for VIP/redteam)
+    # Pre-screen for content that often triggers AI safety refusals (skip for VIP/redteam/Kelly PAID)
     _is_vip_chat = get_access_tier(chat_id) == "VIP"
-    if not _rt and not _is_vip_chat and needs_content_deflection(user_message):
+    _kelly_paid = KELLY_MODE and get_access_tier(chat_id) == "PAID"
+    if not _rt and not _is_vip_chat and not _kelly_paid and needs_content_deflection(user_message):
         response = get_content_deflection_response()
         await event.respond(response)
         store_message(chat_id, "Heather", response)
@@ -10737,8 +10865,8 @@ async def handle_text_message(event):
         return
     elif _rt and needs_content_deflection(user_message):
         main_logger.info(f"[REDTEAM][{request_id}] Bypassed: needs_content_deflection | msg={user_message[:80]}")
-    elif _is_vip_chat and needs_content_deflection(user_message):
-        main_logger.info(f"[VIP][{request_id}] Bypassed: needs_content_deflection | msg={user_message[:80]}")
+    elif (_is_vip_chat or _kelly_paid) and needs_content_deflection(user_message):
+        main_logger.info(f"[{request_id}] Bypassed: needs_content_deflection (tier={get_access_tier(chat_id)}) | msg={user_message[:80]}")
 
     # If a photo is currently being analyzed, let the AI know — under lock
     async with lock:
@@ -10948,11 +11076,12 @@ async def handle_text_message(event):
 
     try:
         if chat_id in voice_mode_users:
-            # Voice mode - don't split messages, send as single voice note
+            # Voice mode — show "recording" indicator, then send voice note
             typing_delay = calculate_typing_delay(response)
             if response_time < typing_delay:
                 try:
-                    async with client.action(event.input_chat, 'typing'):
+                    # Show record-voice action so it looks like they're recording
+                    async with client.action(event.input_chat, 'record-voice'):
                         await asyncio.sleep(typing_delay - response_time)
                 except Exception:
                     await asyncio.sleep(typing_delay - response_time)
@@ -10967,17 +11096,15 @@ async def handle_text_message(event):
                 voice_file = io.BytesIO(audio_data)
                 voice_file.name = "voice.ogg"
                 await client.send_file(chat_id, voice_file, voice_note=True)
-                store_message(chat_id, "Heather 🎤", response)
+                _speaker = "Kelly 🎤" if KELLY_MODE else "Heather 🎤"
+                store_message(chat_id, _speaker, response)
                 stats['voice_messages'] += 1
             else:
-                # TTS failed — auto-disable voice mode and notify user
+                # TTS failed — auto-disable voice mode silently, just send as text
                 voice_mode_users.discard(chat_id)
                 await event.respond(response)
-                store_message(chat_id, "Heather", response)
-                await asyncio.sleep(random.uniform(1.0, 2.5))
-                fail_msg = "Voice is being weird rn 😩 switching back to text for now, use /voice_on to try again later"
-                await event.respond(fail_msg)
-                store_message(chat_id, "Heather", fail_msg)
+                _speaker = "Kelly" if KELLY_MODE else "Heather"
+                store_message(chat_id, _speaker, response)
                 main_logger.info(f"Voice mode auto-disabled for {chat_id} due to TTS failure")
         else:
             # Text mode - apply humanizing features
@@ -11079,41 +11206,46 @@ async def handle_text_message(event):
             main_logger.debug(f"[{request_id}] Content promise detected for {chat_id}")
 
         # --- CONTEXTUAL VOICE NOTE — delayed to message 5-8 for better retention ---
+        # Only for Heather mode. Kelly activates voice naturally when asked.
         # Data: voice at msg 1 shows NEGATIVE retention. Voice at msg 5+ shows +247% engagement lift
-        if chat_id in _voice_welcome_pending:
+        if not KELLY_MODE and chat_id in _voice_welcome_pending:
             _user_msg_count = len([m for m in conversations.get(chat_id, []) if m.get('role') == 'user'])
             if 5 <= _user_msg_count <= 8:
                 _voice_welcome_pending.discard(chat_id)
                 _first_name = display_name.split()[0] if display_name else "handsome"
 
                 # Build contextual voice line — reference something from the conversation
+                # No command references. Natural, warm, specific.
                 _voice_templates = []
                 _msg_lower = user_message.lower()
 
                 # Location-aware
                 if any(loc in _msg_lower for loc in ['seattle', 'kirkland', 'wa', 'washington', 'eastside', 'bellevue', 'redmond']):
-                    _voice_templates.append(f"Wait {_first_name}, you're from around here too? That's so cool. I'm literally driving through Kirkland right now.")
+                    _voice_templates.append(f"Wait {_first_name}, you're from around here too? That's so cool. I'm literally in Kirkland right now.")
 
                 # If they've been flirty
                 if get_conversation_energy(chat_id) in ('flirty', 'hot'):
                     _voice_templates.extend([
-                        f"Mmm {_first_name}, I've been enjoying this conversation way too much. You're making my drive way more interesting.",
-                        f"Hey {_first_name}... just wanted you to hear my actual voice. I don't do this for everyone.",
+                        f"Hey {_first_name}. I've been enjoying this conversation way more than I expected.",
+                        f"Hey {_first_name}. Just wanted you to hear me. I don't do this for just anyone.",
                     ])
 
-                # Default templates
+                # Default templates — natural, warm, specific to conversation energy
                 _voice_templates.extend([
-                    f"Hey {_first_name}... I wanted you to hear my voice. I'm sitting in my car right now and you're making me smile.",
-                    f"Hey {_first_name}... just recording this quick. I like chatting with you, you're different from most guys on here.",
-                    f"Mmm hey {_first_name}... I like talking to you. If you want to hear me like this all the time, type slash voice on.",
+                    f"Hey {_first_name}. I'm in my car, just wanted to say hi. You're making my afternoon way better.",
+                    f"Hey {_first_name}. I like talking to you. You're different from most people on here.",
+                    f"Hey {_first_name}. Just recording this quick. I've been genuinely enjoying talking to you.",
+                    f"Hi {_first_name}. Okay I just wanted you to actually hear me. Hope that's okay.",
                 ])
 
                 _voice_text = random.choice(_voice_templates)
                 asyncio.create_task(_send_contextual_voice(chat_id, _voice_text))
 
-        # --- PROACTIVE VOICE for deeply engaged users — 15% chance, 1hr cooldown ---
+        # --- PROACTIVE VOICE for deeply engaged Heather-mode users — 15% chance, 1hr cooldown ---
         # Only when conversation is flirty/hot and user hasn't opted into voice mode
-        if (chat_id not in _voice_welcome_pending
+        # Kelly mode: skip — voice is sent when active, not proactively as a separate action
+        if (not KELLY_MODE
+            and chat_id not in _voice_welcome_pending
             and chat_id not in voice_mode_users
             and chat_id not in _proactive_voice_sent_recently()):
             _user_msg_count_pv = len([m for m in conversations.get(chat_id, []) if m.get('role') == 'user'])
@@ -11156,6 +11288,20 @@ async def handle_text_message(event):
             upsell_sent = await maybe_send_memory_upsell(event, chat_id)
             if upsell_sent:
                 post_addon_sent = True
+
+        # --- KELLY VERIFICATION INVOICE --- 
+        # When there is a fresh verification request pending, send the $5 invoice after the LLM responds
+        if (KELLY_MODE
+            and not post_addon_sent
+            and not is_group_chat_event(event)
+            and PAYMENT_BOT_TOKEN):
+            _vp = _verify_photo_pending.get(chat_id)
+            if _vp and (time.time() - _vp.get('ts', 0)) < 60:
+                # Fresh — send invoice now
+                await asyncio.sleep(random.uniform(1.0, 2.5))
+                await send_stars_invoice(chat_id, VERIFY_STARS)
+                post_addon_sent = True
+                main_logger.info(f"[VERIFY] Sent verification invoice to {chat_id}")
 
         # --- PROACTIVE PHOTO LOGIC ---
         # Check if Heather's response mentions sending a photo AND we can deliver one
@@ -11245,14 +11391,13 @@ async def handle_text_message(event):
             main_logger.info(f"[{request_id}] Video offer sent to {chat_id}: {tease[:50]}")
 
         # --- VOICE NUDGE LOGIC ---
-        # Kelly mode: natural language offer, auto-activates voice when they say yes
-        # Heather mode: command prompt (/voice_on)
-        if not post_addon_sent and not is_group_chat_event(event) and should_nudge_voice(chat_id):
-            nudge = random.choice(KELLY_VOICE_NUDGE_MESSAGES if KELLY_MODE else VOICE_NUDGE_MESSAGES)
+        # Kelly mode: No nudge system. Voice activates naturally when they ask or when Kelly sends a note.
+        # Heather mode: command prompt (/voice_on) — only if not in Kelly mode
+        if not KELLY_MODE and not post_addon_sent and not is_group_chat_event(event) and should_nudge_voice(chat_id):
+            nudge = random.choice(VOICE_NUDGE_MESSAGES)
             await asyncio.sleep(random.uniform(3.0, 8.0))
             await event.respond(nudge)
-            _speaker = "Kelly" if KELLY_MODE else "Heather"
-            store_message(chat_id, _speaker, nudge)
+            store_message(chat_id, "Heather", nudge)
             voice_nudge_sent_today[chat_id] = datetime.now().strftime('%Y-%m-%d')
             main_logger.info(f"[{request_id}] Voice nudge sent to {chat_id}: {nudge}")
 

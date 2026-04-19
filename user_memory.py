@@ -1584,7 +1584,7 @@ def track_interaction_style(chat_id: int, user_message: str, bot_reply_was_domin
 
     current_tone = style.get("tone_pref")
     # Vote for the winning tone, but don't flip without at least 3 signals to that tone
-    best_tone = max(tone_votes, key=tone_votes.get)
+    best_tone = max(tone_votes, key=tone_votes.get) if tone_votes else "dominant"
     if tone_votes[best_tone] >= 2:
         style["tone_pref"] = best_tone
 
